@@ -403,7 +403,37 @@ def _try_codex_jsonl(content: str) -> Optional[str]:
         elif payload_type == "agent_message":
             messages.append(("assistant", text))
 
-    if len(messages) >= 2 and has_session_meta:
+    if not messages and has_session_meta:
+        for line in lines:
+            try:
+                entry = json.loads(line)
+                payload = entry.get("payload", {})
+                if entry.get("type") != "response_item" or payload.get("type") != "message":
+                    continue
+                role = payload.get("role")
+                metadata = payload.get("internal_chat_message_metadata_passthrough") or {}
+                if role == "user" and "user.text" not in metadata.get("content_item_kinds", []):
+                    continue
+                if role == "assistant" and payload.get("phase") != "final_answer":
+                    continue
+                if role not in ("user", "assistant"):
+                    continue
+                text = "\n".join(
+                    block.get("text", "")
+                    for block in payload.get("content", [])
+                    if isinstance(block, dict)
+                    and block.get("type") in ("input_text", "output_text")
+                ).strip()
+                if text:
+                    messages.append((role, text))
+            except (ValueError, AttributeError, TypeError):
+                continue
+    if (
+        len(messages) >= 2
+        and has_session_meta
+        and any(role == "user" for role, _ in messages)
+        and any(role == "assistant" for role, _ in messages)
+    ):
         return _messages_to_transcript(messages)
     return None
 

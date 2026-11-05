@@ -216,7 +216,43 @@ def _count_human_messages(transcript_path: str) -> int:
                     pass
     except OSError:
         return 0
+    if count == 0:
+        count = len(_codex_response_user_messages(path))
     return count
+
+
+def _codex_response_user_messages(path: Path) -> list[str]:
+    messages = []
+    try:
+        with path.open(encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                    payload = entry.get("payload", {})
+                    metadata = payload.get("internal_chat_message_metadata_passthrough") or {}
+                    if (
+                        entry.get("type") != "response_item"
+                        or payload.get("type") != "message"
+                        or payload.get("role") != "user"
+                        or "user.text" not in metadata.get("content_item_kinds", [])
+                    ):
+                        continue
+                    text = " ".join(
+                        block.get("text", "")
+                        for block in payload.get("content", [])
+                        if isinstance(block, dict) and block.get("type") == "input_text"
+                    ).strip()
+                    if (
+                        text
+                        and "<command-message>" not in text
+                        and not _is_harness_boilerplate(text)
+                    ):
+                        messages.append(text[:200])
+                except (ValueError, AttributeError, TypeError):
+                    continue
+    except OSError:
+        return []
+    return messages
 
 
 _state_dir_initialized = False
@@ -990,6 +1026,8 @@ def _extract_recent_messages(transcript_path: str, count: int = _RECENT_MSG_COUN
                     pass
     except OSError:
         return []
+    if not messages:
+        messages = _codex_response_user_messages(path)
     return messages[-count:]
 
 
